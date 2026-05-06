@@ -24,7 +24,8 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = 20
 
     #LLM Model
-    vertex_model: str = ""
+    openai_api_key: str
+    openai_model: str = "gpt-4o"
 
     @property
     def allowed_origins(self) -> list[str]:
