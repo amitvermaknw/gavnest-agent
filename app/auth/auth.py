@@ -20,10 +20,7 @@ if not firebase_admin._apps:
 #auto_error=False so we control the 401 message
 _bearer = HTTPBearer(auto_error=False)
 
-#Only initialize firebase if not in dev mode
-_DEV_MODE = os.getenv("DEV_MODE", "false").lower() == "true"
-
-if not _DEV_MODE:
+if not _settings.dev_mode:
     if not firebase_admin._apps:
         firebase_admin.initialize_app(
             options={"projectId": _settings.firebase_project_id}
@@ -44,7 +41,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials | None = De
     DEV_MODE=true  → skips verification, returns a fake dev user
     DEV_MODE=false → full Firebase RS256 token verification
     """
-    if _DEV_MODE:
+    if _settings.dev_mode:
         return FirebaseUser(uid="dev-user", email="dev@gavnest.com", name="Dev User")
     
     if not credentials:

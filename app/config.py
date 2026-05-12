@@ -4,6 +4,7 @@ from functools import lru_cache
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    dev_mode: bool = False
     gcp_project_id: str
     gcp_location: str="us-central1"
 
