@@ -62,7 +62,7 @@ def compiled_graph():
 
 
 #Sreaming Service Function
-async def steam_gavvy(
+async def stream_gavvy(
         uid: str,
         phase_id: str,
         message: str,

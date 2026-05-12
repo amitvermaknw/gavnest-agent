@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import firebase_admin
 from firebase_admin import auth, credentials
 from fastapi import Depends, HTTPException, status
@@ -19,6 +20,15 @@ if not firebase_admin._apps:
 #auto_error=False so we control the 401 message
 _bearer = HTTPBearer(auto_error=False)
 
+#Only initialize firebase if not in dev mode
+_DEV_MODE = os.getenv("DEV_MODE", "false").lower() == "true"
+
+if not _DEV_MODE:
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app(
+            options={"projectId": _settings.firebase_project_id}
+        )
+
 class FirebaseUser(BaseModel):
     """Verified claims extracted from the firebase id token"""
     uid: str
@@ -30,8 +40,13 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials | None = De
     FastAPI dependency.  Inject with:  user: FirebaseUser = Depends(get_current_user)
     Returns a FirebaseUser on success.
     Raises HTTP 401 on any verification failure.
-    """
 
+    DEV_MODE=true  → skips verification, returns a fake dev user
+    DEV_MODE=false → full Firebase RS256 token verification
+    """
+    if _DEV_MODE:
+        return FirebaseUser(uid="dev-user", email="dev@gavnest.com", name="Dev User")
+    
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

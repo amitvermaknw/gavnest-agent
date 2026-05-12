@@ -17,9 +17,15 @@ Returns a dict so the node can include it in tool_results and sources.
 from __future__ import annotations
 import httpx
 from datetime import datetime
+from app.config import get_setting
 
 FRED_BASE = "https://api.stlouisfed.org/fred/series/observations"
 SERIES_ID = "MORTGAGE30US"
+
+def _headers()-> dict:
+    """FRED V2 auth key in auth header"""
+    settings = get_setting()
+    return settings.fred_api_key
 
 async def get_current_30yr_rate() -> dict:
     """
@@ -39,6 +45,7 @@ async def get_current_30yr_rate() -> dict:
 
     params = {
         "series_id": SERIES_ID,
+        "api_key": _headers(),
         "sort_order": "desc",
         "limit": 1,
         "file_type": "json"
@@ -81,6 +88,7 @@ async def get_rate_history(limit: int = 52) -> list[dict]:
     """
     params = {
         "series_id": SERIES_ID,
+        "api_key": _headers(),
         "sort_order": "desc",
         "limit": limit,
         "file_type": "json",

@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     openai_api_key: str
     openai_model: str = "gpt-4o"
 
+        # OpenAI
+    openai_api_key: str
+    openai_model: str = "GPT-4o mini"
+
+    #FRED api key
+    fred_api_key: str
+
     @property
     def allowed_origins(self) -> list[str]:
         return [o.strip() for o in self.frontend_url.split(",")]
