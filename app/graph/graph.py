@@ -99,20 +99,29 @@ async def stream_gavvy(
             config=config,
             stream_mode=["updates", "custom", "messages"]
         ):
-            event_type = event[0] if isinstance(event, tuple) else "updates"
-            event_data = event[0] if isinstance(event, tuple) else event
-
+            # When multiple stream_modes passed, LangGraph always yields
+            # a tuple of (mode_name, data). Unpack defensively.
+            if not isinstance(event, tuple) or len(event) != 2:
+                continue
+ 
+            event_type, event_data = event
+ 
             if event_type == "custom":
-                yield f"data: {json.dumps(event_data)}\n\n"
-            
-            elif event_type=="message":
+                if isinstance(event_data, dict):
+                    yield f"data: {json.dumps(event_data)}\n\n"
+ 
+            elif event_type == "messages":
                 chunk = event_data[0] if isinstance(event_data, tuple) else event_data
                 if hasattr(chunk, "content") and chunk.content:
                     yield f"data: {json.dumps({'type': 'token', 'content': chunk.content})}\n\n"
-
+ 
             elif event_type == "updates":
+                if not isinstance(event_data, dict):
+                    continue
                 for node_name, patch in event_data.items():
-                    sources = patch.get("source", [])
+                    if not isinstance(patch, dict):
+                        continue
+                    sources = patch.get("sources", [])
                     if sources:
                         yield f"data: {json.dumps({'type': 'sources', 'items': sources})}\n\n"
 
