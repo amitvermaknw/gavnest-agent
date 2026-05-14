@@ -35,18 +35,19 @@ async def lifespan(app: FastAPI):
     Startup / shutdown lifecycle.
  
     Production upgrade path for the checkpointer (uncomment when Cloud SQL ready):
- 
-        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-        from app.graph.graph import _build_graph
- 
-        async with AsyncPostgresSaver.from_conn_string(
-            settings.database_url
-        ) as pg_checkpointer:
-            await pg_checkpointer.setup()          # creates checkpoint tables
-            import app.graph.graph as g
-            g.compiled_graph = g._build_graph(pg_checkpointer)
-            yield
     """
+
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    from app.graph.graph import _build_graph
+ 
+    async with AsyncPostgresSaver.from_conn_string(
+        settings.database_url
+    ) as pg_checkpointer:
+        await pg_checkpointer.setup()          # creates checkpoint tables
+        import app.graph.graph as g
+        g.compiled_graph = g._build_graph(pg_checkpointer)
+        yield
+
     # Dev: MemorySaver is already set in graph.py — nothing extra needed.
     yield
     # Shutdown: close any open connections here

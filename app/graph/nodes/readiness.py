@@ -157,13 +157,7 @@ async def _fetch_rate_data():
 
 
 def _extract_last_user_message(state: GavvyState) -> str:
-    """Pull the latest human message text from state."""
     messages = state.get("messages", [])
-    for msg in reversed(messages):
-        #handle botj doct formate (initial injection) and message objects
-        if isinstance(msg, dict) and msg.get("role") == "user":
-            return msg.get("content", "")
-        if hasattr(msg, "type") and msg.type == "human":
-            return msg.content
-        
-    return "Tell me about my home-buying readiness."
+    if not messages:
+        return "Tell me about my home-buying readiness."
+    return messages[-1].content
