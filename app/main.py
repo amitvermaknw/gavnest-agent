@@ -11,6 +11,8 @@ Security layers applied in order per request:
   CORS → Firebase auth Depends → slowapi rate limit → Pydantic validation → LangGraph
  
 Run locally:
+docker run -d --name gavnest-pg -e POSTGRES_PASSWORD=postgres \
+    -e POSTGRES_DB=gavnest -p 5432:5432 postgres:16
   uvicorn app.main:app --reload --port 8000
 """
 
@@ -32,25 +34,27 @@ settings = get_setting()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Startup / shutdown lifecycle.
- 
-    Production upgrade path for the checkpointer (uncomment when Cloud SQL ready):
+    Startup: initialize AsyncPostgresSaver checkpointer.
+    This replaces the MemorySaver singleton in graph.py with a
+    durable Postgres-backed one so state survives restarts.
     """
-
-    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-    from app.graph.graph import _build_graph
- 
-    async with AsyncPostgresSaver.from_conn_string(
-        settings.database_url
-    ) as pg_checkpointer:
-        await pg_checkpointer.setup()          # creates checkpoint tables
-        import app.graph.graph as g
-        g.compiled_graph = g._build_graph(pg_checkpointer)
+    try:
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+        from app.graph.graph import _build_graph
+    
+        async with AsyncPostgresSaver.from_conn_string(
+            settings.database_url
+        ) as pg_checkpointer:
+            await pg_checkpointer.setup()      
+            import app.graph.graph as g
+            g.compiled_graph = g._build_graph(pg_checkpointer)
+            print(f"[STARTUP] AsyncPostgresSaver initialized — durable checkpointing active")
+            yield
+    except Exception as e:
+        # Fallback to MemorySaver if Postgres is unavailable
+        # Useful when running without Docker locally
+        print(f"[STARTUP] Postgres unavailable ({e}) — falling back to MemorySaver")
         yield
-
-    # Dev: MemorySaver is already set in graph.py — nothing extra needed.
-    yield
-    # Shutdown: close any open connections here
 
 #App defined
 app = FastAPI(

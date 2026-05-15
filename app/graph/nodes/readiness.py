@@ -21,6 +21,12 @@ from langgraph.config import get_stream_writer
 from app.graph.state import GavvyState
 from app.graph.llm import get_llm
 from app.tools.fred_rates import get_current_30yr_rate, get_rate_history
+from app.services.event_logger import (
+    log_agent_started,
+    log_agent_completed,
+    log_agent_error,
+    log_tool_called,
+)
 
 #System prompt
 SYSTEM_PROMPT = """You are Gavvy, a friendly and knowledgeable home-buying guide \
@@ -87,17 +93,23 @@ async def readiness_agent(state: GavvyState)-> dict:
 
     writer = get_stream_writer()
     llm = get_llm()
+    uid = state.get("uid", "unknown")
+    phase_id = state.get("phase_id", "readiness")
+    user_message = _extract_last_user_message(state)
 
     #Step 1: Gavvy is thinking
+    await log_agent_started(uid, phase_id, user_message)
     writer({"type": "thinking", "message": "Analyzing your readiness profile..."})
 
-    #Step 2: Fetch live FRED data
-    writer({"type": "thinking", "message": "Fetching current mortgage rates from FRED..."})
-
     try:
+        #Step 2: Fetch live FRED data
+        writer({"type": "thinking", "message": "Fetching current mortgage rates from FRED..."})
+        await log_tool_called(uid, phase_id, user_message)
+
         current_rate, rate_history = await _fetch_rate_data()
     except RuntimeError as e:
         #If FRED is down then degrade gracefully
+        await log_agent_error(uid, phase_id, str(e))
         writer({"type": "thinking", "message": "Rate data temporarily unavailable, using recent data..."})
         current_rate = {"rate": 6.9, "data": "recent", "source": "FRED (cached)", "url": "https://fred.stlouisfed.org/series/MORTGAGE30US"}
         rate_history = []
@@ -129,6 +141,9 @@ async def readiness_agent(state: GavvyState)-> dict:
     response = await llm.ainvoke(messages)
     full_text = response.content
 
+    #Log completion
+    await log_agent_completed(uid, phase_id, tools_used=["fred_rates"])
+    
     #Step 5: Return state patch
     return {
         "message": [AIMessage(content=full_text)],
