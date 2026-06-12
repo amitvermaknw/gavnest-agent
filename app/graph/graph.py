@@ -24,7 +24,9 @@ from langgraph.checkpoint.memory import MemorySaver
 from app.graph.state import GavvyState
 from app.graph.router import phase_router, PHASE_TO_AGENT
 from app.graph.nodes.readiness import readiness_agent
-from app.graph.nodes.agents import (mortgage_agent, property_agent, contract_agent)
+from app.graph.nodes.mortgage  import mortgage_agent
+from app.graph.nodes.property  import property_agent
+from app.graph.nodes.contract  import contract_agent
 
 #Build the graph
 

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Gavvy — Local Test</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+
+        select,
+        input,
+        button {
+            padding: 8px;
+            margin: 4px;
+            font-size: 14px;
+        }
+
+        button {
+            background: teal;
+            color: white;
+            border: none;
+            cursor: pointer;
+            padding: 10px 20px;
+        }
+
+        #output {
+            background: #f4f4f4;
+            padding: 16px;
+            margin-top: 20px;
+            border-radius: 8px;
+            white-space: pre-wrap;
+            min-height: 100px;
+            font-size: 13px;
+        }
+
+        .event-thinking {
+            color: #888;
+            font-style: italic;
+        }
+
+        .event-token {
+            color: #222;
+        }
+
+        .event-sources {
+            color: teal;
+        }
+
+        .event-done {
+            color: green;
+            font-weight: bold;
+        }
+
+        .event-error {
+            color: red;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <h2>🏠 Gavvy — Local SSE Test</h2>
+
+    <div>
+        <label>Phase:</label>
+        <select id="phase">
+            <option value="readiness">Phase 1 — Readiness</option>
+            <option value="mortgage">Phase 2 — Mortgage</option>
+            <option value="property">Phase 3 — Property</option>
+            <option value="contract">Phase 4-5 — Contract</option>
+        </select>
+    </div>
+
+    <div>
+        <label>Message:</label><br>
+        <input id="message" type="text" style="width:500px" value="Am I ready to buy a home?" />
+    </div>
+
+    <div>
+        <label>Profile JSON:</label><br>
+        <textarea id="profile" rows="6" style="width:500px; font-size:12px">{
+  "budget": 400000,
+  "creditRange": "Good",
+  "downPct": 10,
+  "location": "Phoenix AZ",
+  "property_address": "1600 Pennsylvania Ave NW, Washington DC 20500"
+}</textarea>
+    </div>
+
+    <button onclick="sendMessage()">Send to Gavvy</button>
+    <button onclick="clearOutput()" style="background:#888">Clear</button>
+
+    <div id="output">Response will appear here...</div>
+
+    <script>
+        async function sendMessage() {
+            const out = document.getElementById('output')
+            out.innerHTML = ''
+
+            let profile = {}
+            try {
+                profile = JSON.parse(document.getElementById('profile').value)
+            } catch (e) {
+                out.textContent = 'Invalid JSON in profile'
+                return
+            }
+
+            const body = {
+                message: document.getElementById('message').value,
+                phase_id: document.getElementById('phase').value,
+                user_profile: profile,
+            }
+
+            let fullResponse = ''
+
+            try {
+                const res = await fetch('/api/v1/gavvy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                })
+
+                const reader = res.body.getReader()
+                const decoder = new TextDecoder()
+
+                while (true) {
+                    const { done, value } = await reader.read()
+                    if (done) break
+
+                    const text = decoder.decode(value)
+                    const lines = text.split('\n')
+
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue
+                        try {
+                            const event = JSON.parse(line.slice(6))
+                            renderEvent(event, out)
+                        } catch (e) { }
+                    }
+                }
+            } catch (e) {
+                out.innerHTML += `<span class="event-error">Connection error: ${e.message}</span>\n`
+            }
+        }
+
+        function renderEvent(event, out) {
+            switch (event.type) {
+                case 'thinking':
+                    out.innerHTML += `<span class="event-thinking">⏳ ${event.message}</span>\n`
+                    break
+                case 'token':
+                    // append tokens inline to build up the response
+                    const existing = out.querySelector('.response-text')
+                    if (existing) {
+                        existing.textContent += event.content
+                    } else {
+                        const span = document.createElement('span')
+                        span.className = 'event-token response-text'
+                        span.textContent = event.content
+                        out.appendChild(span)
+                    }
+                    break
+                case 'sources':
+                    out.innerHTML += `\n<span class="event-sources">📚 Sources: ${event.items.map(s => s.source).join(', ')}</span>\n`
+                    break
+                case 'done':
+                    out.innerHTML += `\n<span class="event-done">✅ Done</span>`
+                    break
+                case 'error':
+                    out.innerHTML += `\n<span class="event-error">❌ Error: ${event.message}</span>`
+                    break
+            }
+        }
+
+        function clearOutput() {
+            document.getElementById('output').innerHTML = 'Response will appear here...'
+        }
+
+        // Update message placeholder based on phase
+        document.getElementById('phase').addEventListener('change', function () {
+            const messages = {
+                readiness: 'Am I ready to buy a home?',
+                mortgage: 'What rate can I expect with Good credit?',
+                property: 'Is this property in a flood zone?',
+                contract: 'Explain the inspection contingency clause',
+            }
+            document.getElementById('message').value = messages[this.value] || ''
+        })
+    </script>
+</body>
+
+</html>

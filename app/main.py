@@ -22,12 +22,16 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app.config import get_setting
 from app.middleware.rate_limit import limiter
 from app.api import gavvy, health, journey
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from app.graph.graph import _build_graph
+import app.graph.graph as g
 
 settings = get_setting()
 
@@ -39,15 +43,13 @@ async def lifespan(app: FastAPI):
     durable Postgres-backed one so state survives restarts.
     """
     try:
-        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-        from app.graph.graph import _build_graph
+        
     
-        async with AsyncPostgresSaver.from_conn_string(
-            settings.database_url
-        ) as pg_checkpointer:
-            await pg_checkpointer.setup()      
-            import app.graph.graph as g
-            g.compiled_graph = g._build_graph(pg_checkpointer)
+        async with AsyncPostgresSaver.from_conn_string(settings.NEON_POSTGRESQL_DB) as pg_checkpointer:
+            await pg_checkpointer.setup()     
+            # g.compiled_graph = g._build_graph(pg_checkpointer)
+            g._graph_instance = g._build_graph(pg_checkpointer)
+
             print(f"[STARTUP] AsyncPostgresSaver initialized — durable checkpointing active")
             yield
     except Exception as e:
@@ -74,6 +76,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type"],
+    allow_origin_regex=r"null" if settings.dev_mode else None,
 )
 
 #Rate Limiter
@@ -85,3 +88,8 @@ app.include_router(health.router)
 app.include_router(gavvy.router)
 app.include_router(journey.router)
 
+# Access at: http://localhost:8000/test/test.html
+import os
+_test_dir = "test" if os.path.exists("test") else "app/test"
+if settings.dev_mode and os.path.exists(_test_dir):
+    app.mount("/test", StaticFiles(directory=_test_dir), name="static")

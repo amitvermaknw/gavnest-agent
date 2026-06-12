@@ -1,18 +1,9 @@
 """
-Readiness agent — Am I ready to buy?
- 
-What this node does:
-1. Pushes a thinking event so the UI shows progress immediately
-2. Calls FRED API to get the live 30-year mortgage rate
-3. Builds a prompt with the user's profile + live rate data
-4. Streams the LLM response token by token back to the UI
-5. Returns the full state patch (messages + sources)
- 
-LLM: ChatOpenAI with streaming=True
-     Each token is yielded via get_stream_writer() in messages mode.
+Readiness agent — Phase 1: Am I ready to buy?
 
+Input:  ReadinessInput  (validated from user_profile)
+Output: ReadinessOutput (structured LLM output via with_structured_output)
 """
-
 from __future__ import annotations
 
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
@@ -20,6 +11,7 @@ from langgraph.config import get_stream_writer
 
 from app.graph.state import GavvyState
 from app.graph.llm import get_llm
+from app.graph.schemas import ReadinessInput, ReadinessOutput
 from app.tools.fred_rates import get_current_30yr_rate, get_rate_history
 from app.services.event_logger import (
     log_agent_started,
@@ -28,151 +20,118 @@ from app.services.event_logger import (
     log_tool_called,
 )
 
-#System prompt
-SYSTEM_PROMPT = """You are Gavvy, a friendly and knowledgeable home-buying guide \
-built by GavNest. Your role is to educate first-time home buyers — not to give \
-financial or legal advice.
- 
+
+SYSTEM_PROMPT = """You are Gavvy, a friendly home-buying guide built by GavNest.
+Your role is education only — never financial advice.
+
 Rules:
-- Always cite your data sources (FRED, CFPB, HUD).
-- Never tell the user what they "should" do. Frame everything as education.
-- Be warm, clear, and jargon-free. If you use a term, define it.
-- Keep responses focused and under 300 words unless the user asks for more detail.
-- End with one follow-up question to keep the conversation moving.
- 
-You are currently helping the user with Phase 1: Am I ready to buy?
-Topics in scope: affordability, DTI ratio, true monthly cost, rent vs buy, \
-credit score impact on rates, how much to save for a down payment."""
+- Cite FRED as your data source for mortgage rates.
+- Be warm, clear, and jargon-free. Define every term you use.
+- Show concrete numbers: monthly payments, DTI ratios, down payment amounts.
+- Never tell the user what to do. Frame everything as education.
+- Populate every field in the response schema accurately.
 
-def _build_affordability_prompt(
-        user_message: str,
-        profile: dict,
-        current_rate: dict,
-        rate_history: list[dict]
-)-> str:
-    """
-    Builds the context-rich prompt sent to the LLM.
-    Keeps the LLM prompt separate from the node logic-easier to iterate
-    """
-    #Rate trend: compare cuirrent rate to 1 year ago
-    trend_note = ""
+You are helping with Phase 1: Am I ready to buy?
+Topics: affordability, DTI ratio, true monthly cost, rent vs buy,
+credit score impact, how much to save for a down payment."""
 
-    if len(rate_history) >= 2:
-        oldest = rate_history[0]["rate"]
-        newest = rate_history[-1]["rate"]
-        diff = round(newest-oldest, 2)
-        direction = "up" if diff > 0 else "down"
-        trend_note = f"Rate are {direction} {abs(diff)}% vs one year ago."
 
-    return f"""
-    User profile:
-        - Budget (max purchase price): {profile.get("budget", "not provided")}
-        - Credit score range: {profile.get("creditRange", "not provided")}
-        - Down payment %: {profile.get("downPct", "not provided")}%
-        - Location: {profile.get("location", "not provided")}
-        - Timeline: {profile.get("timeline", "not provided")}
-        
-        Live market data (FRED / Freddie Mac PMMS, as of {current_rate["date"]}):
-        - Current 30-year fixed rate: {current_rate["rate"]}%
-        - {trend_note}
-        
-        User's question:
-        {user_message}
-        
-        Answer the user's question using their profile and the live rate data above.
-        Cite FRED as your source for rate data.
-    """.strip()
-
-#The Node
-
-async def readiness_agent(state: GavvyState)-> dict:
-    """
-    LangGraph calls this with the current state.
-    Returns a dict — LangGraph merges it into state via the reducers.
-    """
-
+async def readiness_agent(state: GavvyState) -> dict:
     writer = get_stream_writer()
-    llm = get_llm()
     uid = state.get("uid", "unknown")
     phase_id = state.get("phase_id", "readiness")
     user_message = _extract_last_user_message(state)
 
-    #Step 1: Gavvy is thinking
     await log_agent_started(uid, phase_id, user_message)
     writer({"type": "thinking", "message": "Analyzing your readiness profile..."})
 
     try:
-        #Step 2: Fetch live FRED data
-        writer({"type": "thinking", "message": "Fetching current mortgage rates from FRED..."})
-        await log_tool_called(uid, phase_id, user_message)
+        # ── Validate input 
+        try:
+            inp = ReadinessInput.from_profile(state.get("user_profile", {}))
+        except ValueError as e:
+            raise RuntimeError(f"Invalid profile data: {e}") from e
 
-        current_rate, rate_history = await _fetch_rate_data()
-    except RuntimeError as e:
-        #If FRED is down then degrade gracefully
+        # ── Fetch FRED data 
+        await log_tool_called(uid, phase_id, "fred_rates")
+        writer({"type": "thinking", "message": "Fetching live mortgage rates from FRED..."})
+
+        import asyncio
+        current_rate, rate_history = await asyncio.gather(
+            get_current_30yr_rate(),
+            get_rate_history(limit=52),
+        )
+
+        # ── Rate trend──
+        trend_note = ""
+        if len(rate_history) >= 2:
+            diff = round(rate_history[-1]["rate"] - rate_history[0]["rate"], 2)
+            direction = "up" if diff > 0 else "down"
+            trend_note = f"Rates are {direction} {abs(diff)}% vs one year ago."
+
+        # ── Build prompt
+        writer({"type": "thinking", "message": "Gavvy is thinking..."})
+
+        loan_amount = inp.budget * (1 - inp.down_pct / 100)
+
+        prompt = f"""
+                User profile:
+                - Budget (max purchase price): ${inp.budget:,.0f}
+                - Loan amount after down payment: ${loan_amount:,.0f}
+                - Down payment: {inp.down_pct}% (${inp.budget * inp.down_pct / 100:,.0f})
+                - Credit score range: {inp.credit_range.value}
+                - Location: {inp.location or "not provided"}
+                - Timeline: {inp.timeline or "not provided"}
+                - Gross monthly income: {"${:,.0f}".format(inp.gross_monthly_income) if inp.gross_monthly_income else "not provided"}
+
+                Live market data (FRED / Freddie Mac PMMS, as of {current_rate["date"]}):
+                - Current 30-year fixed rate: {current_rate["rate"]}%
+                - {trend_note}
+
+                User's question:
+                {user_message}
+
+                Calculate the affordability breakdown, readiness score, and provide
+                concrete next steps. Use the FRED rate of {current_rate["rate"]}% in all calculations.
+                Populate all fields in the response schema.
+                """.strip()
+
+        messages = [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=prompt),
+        ]
+
+        # ── Structured LLM output 
+        structured_llm = get_llm().with_structured_output(ReadinessOutput)
+        output: ReadinessOutput = await structured_llm.ainvoke(messages)
+
+        await log_agent_completed(uid, phase_id, tools_used=["fred_rates"])
+
+        return {
+            "messages": [AIMessage(content=output.summary)],
+            "tool_results": output.model_dump(),
+            "sources": [
+                {
+                    "source":  "FRED / Freddie Mac PMMS",
+                    "url":     "https://fred.stlouisfed.org/series/MORTGAGE30US",
+                    "snippet": f"30-year fixed: {current_rate['rate']}% as of {current_rate['date']}",
+                }
+            ],
+            "awaiting_human": False,
+        }
+
+    except Exception as e:
         await log_agent_error(uid, phase_id, str(e))
-        writer({"type": "thinking", "message": "Rate data temporarily unavailable, using recent data..."})
-        current_rate = {"rate": 6.9, "data": "recent", "source": "FRED (cached)", "url": "https://fred.stlouisfed.org/series/MORTGAGE30US"}
-        rate_history = []
-
-
-    #Step3: Build prompt
-    user_message = _extract_last_user_message(state)
-    profile = state.get("user_profile", {})
-
-    prompt = _build_affordability_prompt(
-        user_message=user_message,
-        profile=profile,
-        current_rate=current_rate,
-        rate_history=rate_history
-    )
-
-    messages = [
-        SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(content=prompt)
-    ]
-
-    #Step 4: Stream LLM response
-    # ainvoke returns the full response.
-    # LangGraph's "messages" stream mode picks up token chunks automatically
-    # because get_llm() has streaming=True. No manual token loop needed here.
-
-    writer({"type": "thinking", "message": "Gavvy is thinking..."})
-
-    response = await llm.ainvoke(messages)
-    full_text = response.content
-
-    #Log completion
-    await log_agent_completed(uid, phase_id, tools_used=["fred_rates"])
-    
-    #Step 5: Return state patch
-    return {
-        "message": [AIMessage(content=full_text)],
-        "tool_results": {
-            "fred_rate": current_rate["rate"],
-            "fred_date": current_rate["date"]
-        },
-        "source": [
-            {
-                "source": current_rate["source"],
-                "url": current_rate["url"],
-                "snipeet": f"30-year fixed rate: {current_rate['rate']}% as of {current_rate['date']}"
-            }
-        ],
-        "awaiting_human": False
-    }
-
-async def _fetch_rate_data():
-    """Run both FRED calls concurrently"""
-    import asyncio
-    current_rate, rate_history = await asyncio.gather(
-        get_current_30yr_rate(),
-        get_rate_history(limit=52)
-    )
-    return current_rate, rate_history
+        raise
 
 
 def _extract_last_user_message(state: GavvyState) -> str:
     messages = state.get("messages", [])
     if not messages:
         return "Tell me about my home-buying readiness."
-    return messages[-1].content
+    last = messages[-1]
+    if hasattr(last, "content"):
+        return last.content
+    if isinstance(last, dict):
+        return last.get("content", "")
+    return "Tell me about my home-buying readiness."

@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     firebase_project_id: str
 
     # PostgreSQL checkpointer (Cloud SQL or local for dev)
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/gavnest"
+    NEON_POSTGRESQL_DB: str
 
     #CORS
     frontend_url: str = "http://localhost:3000"
@@ -37,7 +37,11 @@ class Settings(BaseSettings):
 
     @property
     def allowed_origins(self) -> list[str]:
-        return [o.strip() for o in self.frontend_url.split(",")]
+        origins = [o.strip() for o in self.frontend_url.split(",")]
+        # Allow file:// origin (browsers send "null") in dev mode only
+        if self.dev_mode and "null" not in origins:
+            origins.append("null")
+        return origins
     
 
 @lru_cache

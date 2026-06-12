@@ -24,3 +24,6 @@ langgraph-checkpoint-postgres==3.0.5
 psycopg[binary]==3.2.6
 
 langsmith==0.7.36
+
+pypdf==4.3.1
+aiofiles
