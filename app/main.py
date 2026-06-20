@@ -19,8 +19,12 @@ docker run -d --name gavnest-pg -e POSTGRES_PASSWORD=postgres \
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import warnings
+ 
+# Suppress harmless LangChain + Pydantic serialization warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic.main")
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
@@ -44,14 +48,18 @@ async def lifespan(app: FastAPI):
     """
     try:
         
-    
-        async with AsyncPostgresSaver.from_conn_string(settings.NEON_POSTGRESQL_DB) as pg_checkpointer:
-            await pg_checkpointer.setup()     
-            # g.compiled_graph = g._build_graph(pg_checkpointer)
+        db_url = settings.NEON_POSTGRESQL_DB.replace("?sslmode=require", "")
+        conn_kwargs = {"ssl": "require"} if "neon.tech" in settings.NEON_POSTGRESQL_DB else {}
+ 
+        async with AsyncPostgresSaver.from_conn_string(
+            db_url,
+            **conn_kwargs,
+        ) as pg_checkpointer:
+            await pg_checkpointer.setup()          # creates checkpoint tables if not exist
             g._graph_instance = g._build_graph(pg_checkpointer)
-
             print(f"[STARTUP] AsyncPostgresSaver initialized — durable checkpointing active")
             yield
+
     except Exception as e:
         # Fallback to MemorySaver if Postgres is unavailable
         # Useful when running without Docker locally
