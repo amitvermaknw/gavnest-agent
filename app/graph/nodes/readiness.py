@@ -10,9 +10,10 @@ from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 from langgraph.config import get_stream_writer
 
 from app.graph.state import GavvyState
-from app.graph.llm import get_llm
+from app.graph.llm import get_llm, stream_with_structured_output
 from app.graph.schemas import ReadinessInput, ReadinessOutput
 from app.tools.fred_rates import get_current_30yr_rate, get_rate_history
+from app.api.firestore_write import write_actions_for_phase, write_insight
 from app.services.event_logger import (
     log_agent_started,
     log_agent_completed,
@@ -74,7 +75,7 @@ async def readiness_agent(state: GavvyState) -> dict:
 
         loan_amount = inp.budget * (1 - inp.down_pct / 100)
 
-        prompt = f"""
+        context = f"""
                 User profile:
                 - Budget (max purchase price): ${inp.budget:,.0f}
                 - Loan amount after down payment: ${loan_amount:,.0f}
@@ -91,22 +92,34 @@ async def readiness_agent(state: GavvyState) -> dict:
                 User's question:
                 {user_message}
 
-                Calculate the affordability breakdown, readiness score, and provide
-                concrete next steps. Use the FRED rate of {current_rate["rate"]}% in all calculations.
-                Populate all fields in the response schema.
+                Calculate the affordability breakdown and readiness score using the
+                FRED rate of {current_rate["rate"]}% in all calculations.
                 """.strip()
 
-        messages = [
+        reply_instruction = """
+                Reply directly to the user in 3-5 warm, plain-English sentences using
+                the numbers above. No markdown headers, bullet lists, or math notation —
+                write it exactly as you'd say it out loud to a friend.
+                """.strip()
+
+        structured_instruction = "Populate all fields in the response schema accurately."
+
+        reply_messages = [
             SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=prompt),
+            HumanMessage(content=f"{context}\n\n{reply_instruction}"),
+        ]
+        structured_messages = [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=f"{context}\n\n{structured_instruction}"),
         ]
 
-        # ── Structured LLM output 
-        structured_llm = get_llm().with_structured_output(ReadinessOutput)
-        output: ReadinessOutput = await structured_llm.ainvoke(messages)
+        # ── Structured LLM output (streamed reply + structured data concurrently)
+        output: ReadinessOutput = await stream_with_structured_output(
+            get_llm(), reply_messages, structured_messages, ReadinessOutput, writer
+        )
 
         await log_agent_completed(uid, phase_id, tools_used=["fred_rates"])
-
+        await save_the_state(state, output)
         return {
             "messages": [AIMessage(content=output.summary)],
             "tool_results": output.model_dump(),
@@ -135,3 +148,25 @@ def _extract_last_user_message(state: GavvyState) -> str:
     if isinstance(last, dict):
         return last.get("content", "")
     return "Tell me about my home-buying readiness."
+
+async def save_the_state(state: GavvyState, result: ReadinessOutput) -> None:
+    actions_to_write = [
+        {
+            "title":       "Share your gross monthly income with Gavvy",
+            "description": "Required to calculate your DTI ratio and true affordability",
+            "urgency":     None
+        },
+        {
+            "title":       "Review your estimated monthly payment",
+            "description": f"Based on your profile, estimated payment is ~${result.affordability.estimated_monthly_payment}/mo",
+            "urgency":     None
+        }
+    ]
+
+    # Write to Firestore — frontend picks this up via real-time subscription
+    await write_actions_for_phase(uid=state['uid'], phase=1, actions=actions_to_write)
+    await write_insight(
+        uid=state['uid'],
+        phase=1,
+        message=result.summary  # the human-readable summary Gavvy already generated
+    )

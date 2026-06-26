@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 from langgraph.config import get_stream_writer
 
 from app.graph.state import GavvyState
-from app.graph.llm import get_llm
+from app.graph.llm import get_llm, stream_with_structured_output
 from app.graph.schemas import PropertyInput, PropertyOutput
 from app.tools.fema_flood import get_flood_zone
 from app.tools.hoa_analyzer import analyze_hoa_document
@@ -99,7 +99,7 @@ async def property_agent(state: GavvyState) -> dict:
         flood_section = _format_flood_section(flood_data, inp.property_address)
         hoa_section   = _format_hoa_section(hoa_data)
 
-        prompt = f"""
+        context = f"""
             User profile:
             - Property address: {inp.property_address}
             - Budget: ${inp.budget:,.0f}
@@ -111,21 +111,34 @@ async def property_agent(state: GavvyState) -> dict:
 
             User's question:
             {user_message}
-
-            Populate all fields in the response schema.
-            For flood data, use the FEMA zone information above.
-            For HOA findings, map each finding to an HOAFinding with accurate risk levels.
-            Explain practical dollar impact for high-risk findings.
             """.strip()
 
-        messages = [
+        reply_instruction = """
+            Reply directly to the user in 3-5 warm, plain-English sentences covering
+            the key flood/HOA risk takeaways above and the practical dollar impact for
+            any high-risk findings. No markdown headers, bullet lists, or math
+            notation — write it exactly as you'd say it out loud to a friend.
+            """.strip()
+
+        structured_instruction = (
+            "Populate all fields in the response schema. For flood data, use the FEMA "
+            "zone information above. For HOA findings, map each finding to an "
+            "HOAFinding with accurate risk levels."
+        )
+
+        reply_messages = [
             SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=prompt),
+            HumanMessage(content=f"{context}\n\n{reply_instruction}"),
+        ]
+        structured_messages = [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=f"{context}\n\n{structured_instruction}"),
         ]
 
-        # ── Structured LLM output 
-        structured_llm = llm.with_structured_output(PropertyOutput)
-        output: PropertyOutput = await structured_llm.ainvoke(messages)
+        # ── Structured LLM output (streamed reply + structured data concurrently)
+        output: PropertyOutput = await stream_with_structured_output(
+            llm, reply_messages, structured_messages, PropertyOutput, writer
+        )
 
         # ── Build sources 
         sources = []

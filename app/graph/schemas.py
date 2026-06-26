@@ -24,9 +24,42 @@ Usage in an agent:
 """
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, Field, field_validator
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SHARED HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def parse_money(value) -> float:
+    """Parse a money value from the client, which may be a number or a string
+    like '$300,000', '300k', or a range like '$250k-$350k'.
+
+    Ranges resolve to the midpoint of their bounds.
+    """
+    if value is None or value == "":
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    bounds = []
+    for part in re.split(r"-|-|\bto\b", str(value).lower()):
+        part = part.strip().replace("$", "").replace(",", "")
+        if not part:
+            continue
+        multiplier = 1
+        if part.endswith("k"):
+            multiplier, part = 1_000, part[:-1]
+        elif part.endswith("m"):
+            multiplier, part = 1_000_000, part[:-1]
+        bounds.append(float(part) * multiplier)
+
+    if not bounds:
+        raise ValueError(f"Could not parse money value: {value!r}")
+    return sum(bounds) / len(bounds)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -81,12 +114,12 @@ class ReadinessInput(BaseModel):
     def from_profile(cls, profile: dict) -> "ReadinessInput":
         """Build from the user_profile dict in GavvyState."""
         return cls(
-            budget=float(profile.get("budget", 0)),
+            budget=parse_money(profile.get("budget", 0)),
             credit_range=CreditTier(profile.get("creditRange", "Good")),
             down_pct=float(profile.get("downPct", 20)),
             location=profile.get("location", ""),
             timeline=profile.get("timeline", ""),
-            gross_monthly_income=profile.get("grossMonthlyIncome"),
+            gross_monthly_income=parse_money(profile.get("grossMonthlyIncome")) or None,
         )
 
 
@@ -128,7 +161,7 @@ class MortgageInput(BaseModel):
     @classmethod
     def from_profile(cls, profile: dict) -> "MortgageInput":
         return cls(
-            budget=float(profile.get("budget", 0)),
+            budget=parse_money(profile.get("budget", 0)),
             credit_range=CreditTier(profile.get("creditRange", "Good")),
             down_pct=float(profile.get("downPct", 20)),
             location=profile.get("location", ""),
@@ -175,7 +208,7 @@ class PropertyInput(BaseModel):
     def from_profile(cls, profile: dict) -> "PropertyInput":
         return cls(
             property_address=str(profile.get("property_address") or ""),
-            budget=float(profile.get("budget") or 0),
+            budget=parse_money(profile.get("budget")),
             location=str(profile.get("location") or ""),
         )
 
@@ -222,9 +255,9 @@ class ContractInput(BaseModel):
     def from_profile(cls, profile: dict) -> "ContractInput":
         return cls(
             property_address=profile.get("property_address", ""),
-            budget=float(profile.get("budget", 0)),
+            budget=parse_money(profile.get("budget", 0)),
             location=profile.get("location", ""),
-            offer_price=profile.get("offerPrice"),
+            offer_price=parse_money(profile.get("offerPrice")) or None,
         )
 
 

@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 from langgraph.config import get_stream_writer
 
 from app.graph.state import GavvyState
-from app.graph.llm import get_llm
+from app.graph.llm import get_llm, stream_with_structured_output
 from app.graph.schemas import MortgageInput, MortgageOutput
 from app.tools.fred_rates import get_current_30yr_rate
 from app.tools.hmda_rates import get_all_tiers, get_cost_difference
@@ -85,7 +85,7 @@ async def mortgage_agent(state: GavvyState) -> dict:
 
         rate_premium = round(user_tier["rate_mid"] - excellent_tier["rate_mid"], 2)
 
-        prompt = f"""
+        context = f"""
             User profile:
             - Budget: ${inp.budget:,.0f}
             - Loan amount: ${loan_amount:,.0f}
@@ -108,20 +108,33 @@ async def mortgage_agent(state: GavvyState) -> dict:
 
             User's question:
             {user_message}
-
-            Populate the response schema with accurate numbers from the data above.
-            Explain the tier comparison and 30-year cost impact clearly.
-            Provide concrete pre-approval steps.
             """.strip()
 
-        messages = [
+        reply_instruction = """
+            Reply directly to the user in 3-5 warm, plain-English sentences explaining
+            the tier comparison and 30-year cost impact using the numbers above. No
+            markdown headers, bullet lists, or math notation — write it exactly as
+            you'd say it out loud to a friend.
+            """.strip()
+
+        structured_instruction = (
+            "Populate the response schema with accurate numbers from the data above. "
+            "Provide concrete pre-approval steps."
+        )
+
+        reply_messages = [
             SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=prompt),
+            HumanMessage(content=f"{context}\n\n{reply_instruction}"),
+        ]
+        structured_messages = [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=f"{context}\n\n{structured_instruction}"),
         ]
 
-        # ── Structured LLM output 
-        structured_llm = get_llm().with_structured_output(MortgageOutput)
-        output: MortgageOutput = await structured_llm.ainvoke(messages)
+        # ── Structured LLM output (streamed reply + structured data concurrently)
+        output: MortgageOutput = await stream_with_structured_output(
+            get_llm(), reply_messages, structured_messages, MortgageOutput, writer
+        )
 
         await log_agent_completed(uid, phase_id, tools_used=["fred_rates", "hmda_rates"])
 

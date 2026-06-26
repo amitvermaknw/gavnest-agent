@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 from langgraph.config import get_stream_writer
 
 from app.graph.state import GavvyState
-from app.graph.llm import get_llm
+from app.graph.llm import get_llm, stream_with_structured_output
 from app.graph.schemas import ContractInput, ContractOutput
 from app.services.event_logger import (
     log_agent_started,
@@ -81,7 +81,7 @@ async def contract_agent(state: GavvyState) -> dict:
             else "No contract uploaded — provide general education on contract clauses."
         )
 
-        prompt = f"""
+        context = f"""
             User profile:
             - Property address: {inp.property_address or "not provided"}
             - Offer/purchase price: ${purchase_price:,.0f}
@@ -92,23 +92,35 @@ async def contract_agent(state: GavvyState) -> dict:
 
             User's question:
             {user_message}
-
-            Populate the response schema:
-            - Analyze any contract clauses found in the text
-            - Calculate closing cost breakdown for the purchase price and state
-            - Flag any waived contingencies as high risk
-            - Provide negotiation tips where applicable
-            - Explain everything in plain English
             """.strip()
 
-        messages = [
+        reply_instruction = """
+            Reply directly to the user in 3-5 warm, plain-English sentences covering
+            any waived contingencies (flagged as high risk) and the closing cost
+            estimate above. No markdown headers, bullet lists, or math notation —
+            write it exactly as you'd say it out loud to a friend.
+            """.strip()
+
+        structured_instruction = (
+            "Populate the response schema: analyze any contract clauses found in the "
+            "text, calculate the closing cost breakdown for the purchase price and "
+            "state, flag any waived contingencies as high risk, and provide "
+            "negotiation tips where applicable."
+        )
+
+        reply_messages = [
             SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=prompt),
+            HumanMessage(content=f"{context}\n\n{reply_instruction}"),
+        ]
+        structured_messages = [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=f"{context}\n\n{structured_instruction}"),
         ]
 
-        # ── Structured LLM output 
-        structured_llm = llm.with_structured_output(ContractOutput)
-        output: ContractOutput = await structured_llm.ainvoke(messages)
+        # ── Structured LLM output (streamed reply + structured data concurrently)
+        output: ContractOutput = await stream_with_structured_output(
+            llm, reply_messages, structured_messages, ContractOutput, writer
+        )
 
         await log_agent_completed(uid, phase_id, tools_used=tools_used)
 
