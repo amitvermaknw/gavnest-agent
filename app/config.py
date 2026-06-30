@@ -26,11 +26,7 @@ class Settings(BaseSettings):
 
     #LLM Model
     openai_api_key: str
-    openai_model: str = "gpt-4o"
-
-        # OpenAI
-    openai_api_key: str
-    openai_model: str = "GPT-4o mini"
+    openai_model: str = "gpt-4o-mini"
 
     #FRED api key
     fred_api_key: str

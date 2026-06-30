@@ -13,7 +13,7 @@ from app.graph.state import GavvyState
 from app.graph.llm import get_llm, stream_with_structured_output
 from app.graph.schemas import ReadinessInput, ReadinessOutput
 from app.tools.fred_rates import get_current_30yr_rate, get_rate_history
-from app.api.firestore_write import write_actions_for_phase, write_insight
+from app.api.firestore_writer import write_action, write_insight
 from app.services.event_logger import (
     log_agent_started,
     log_agent_completed,
@@ -164,7 +164,8 @@ async def save_the_state(state: GavvyState, result: ReadinessOutput) -> None:
     ]
 
     # Write to Firestore — frontend picks this up via real-time subscription
-    await write_actions_for_phase(uid=state['uid'], phase=1, actions=actions_to_write)
+    for action in actions_to_write:
+        await write_action(uid=state['uid'], phase=1, action=action)
     await write_insight(
         uid=state['uid'],
         phase=1,
