@@ -10,10 +10,8 @@ ever being something the model could get wrong.
 from __future__ import annotations
 
 from typing import Literal
-
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
-
 from app.graph.llm import get_llm
 from app.tools.fred_rates import get_current_30yr_rate
 
