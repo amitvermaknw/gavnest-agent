@@ -61,8 +61,8 @@ async def _read_all_tiers_from_firestore() -> dict | None:
 
         result = {}
 
-        for tier, doc in zip(tiers, doc):
-            if doc.existes:
+        for tier, doc in zip(tiers, docs):
+            if doc.exists:
                 result[tier] = doc.to_dict()
 
         if len(result) == 4:
@@ -95,8 +95,8 @@ def _adjust_tiers(base: dict, current_30yr_rate: float) -> dict[str, dict]:
 
         result[tier] = {
             "tier": tier,
-            "score_rage": data["score_range"],
-            "rate_mide": adj_mid,
+            "score_range": data["score_range"],
+            "rate_mid": adj_mid,
             "rate_low": adj_low,
             "rate_high": adj_high,
             "monthly_payment_300k": _monthly_payment(300_000, adj_mid, 30),

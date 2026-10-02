@@ -1,9 +1,24 @@
 MORTGAGE_QUESTIONS = [
     {
-        "id":          "target_home_price",
+        "question_id": "credit_range",
+        "label":       "What's your approximate credit score range?",
+        "helper":      "A rough estimate is fine — this affects the rate range Gavvy shows you",
+        "input_type":  "choice",
+        "placeholder": None,
+        "choices":     [
+            "760+ (Excellent)",
+            "720-759 (Good)",
+            "660-719 (Fair)",
+            "620-659 (Poor)",
+            "Not sure",
+        ],
+    },
+    {
+        "question_id": "target_home_price",
         "label":       "What's the price range of homes you're looking at?",
         "helper":      "This helps Gavvy find the most relevant lenders and rates",
         "input_type":  "choice",
+        "placeholder": None,
         "choices":     [
             "Under $250k",
             "$250k-$350k",
@@ -13,17 +28,19 @@ MORTGAGE_QUESTIONS = [
         ],
     },
     {
-        "id":          "down_payment_amount",
+        "question_id": "down_payment_amount",
         "label":       "How much are you putting down?",
         "helper":      "Exact amount is fine — we'll calculate the percentage",
         "input_type":  "currency",
         "placeholder": "85000",
+        "choices":     None,
     },
     {
-        "id":          "has_existing_lender",
+        "question_id": "has_existing_lender",
         "label":       "Have you already talked to a lender?",
         "helper":      "No pressure either way — helps Gavvy know where you are",
         "input_type":  "choice",
+        "placeholder": None,
         "choices":     [
             "No, haven't started",
             "Yes, got a pre-qual letter",
@@ -32,10 +49,11 @@ MORTGAGE_QUESTIONS = [
         ],
     },
     {
-        "id":          "loan_type_preference",
+        "question_id": "loan_type_preference",
         "label":       "Do you have a loan type preference?",
         "helper":      "Gavvy will explain tradeoffs if you're unsure",
         "input_type":  "choice",
+        "placeholder": None,
         "choices":     [
             "Conventional (20%+ down)",
             "FHA (lower down payment)",

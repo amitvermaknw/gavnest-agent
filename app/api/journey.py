@@ -14,7 +14,9 @@ from pydantic import BaseModel, Field
 from app.api.firestore_writer import advance_phase, update_profile, write_insight
 from app.auth import FirebaseUser, get_current_user
 from app.services.readiness import compute_readiness
-from app.config import READINESS_QUESTIONS, MORTGAGE_QUESTIONS
+from app.services.mortgage import compute_mortgage
+from app.services.property import compute_property
+from app.questions import READINESS_QUESTIONS, MORTGAGE_QUESTIONS, PROPERTY_QUESTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -50,15 +52,18 @@ class NextStepResponse(BaseModel):
 
 PHASE_QUESTIONS = {
     "readiness": READINESS_QUESTIONS,
-    "mortgage": MORTGAGE_QUESTIONS
+    "mortgage": MORTGAGE_QUESTIONS,
+    "property": PROPERTY_QUESTIONS,
 }
 
 READINESS_PHASE_NUM = 1  # "readiness" is phase 1 in phases/data (see gavvy-web lib/firestore.ts)
 MORTGAGE_PHASE_NUM = 2
+PROPERTY_PHASE_NUM = 3
 
 PHASE_NUM_MAP = {
     "readiness": READINESS_PHASE_NUM,
     "mortgage":  MORTGAGE_PHASE_NUM,
+    "property":  PROPERTY_PHASE_NUM,
 }
 
 
@@ -122,7 +127,7 @@ async def next_step(body: NextStepRequest, user: FirebaseUser = Depends(get_curr
         raise HTTPException(status_code=400, detail=f"No summary handler for: {body.phase_id!r}")
 
     try:
-        result = await summary_fn(body.answers)
+        result = await summary_fn(body.answers, user.uid)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -162,19 +167,11 @@ async def next_step(body: NextStepRequest, user: FirebaseUser = Depends(get_curr
     )
 
 
-async def compute_mortgage_summary(answers: dict) -> dict:
-    """
-    One LLM call at the end of Phase 2.
-    Uses existing mortgage_agent logic to return guidance.
-    """
-    from app.graph.nodes.mortgage import compute_mortgage  # extract this (see Step 3)
-    return await compute_mortgage(answers)
-
-
 # Map phase_id → summary function
 PHASE_SUMMARY_FN = {
     "readiness": compute_readiness,
-    "mortgage":  compute_mortgage_summary,
+    "mortgage":  compute_mortgage,
+    "property":  compute_property,
 }
 
 # Map phase_id → Firestore fields to write after summary
@@ -190,6 +187,7 @@ PHASE_PROFILE_FIELDS = {
         "readinessVerdict":   result.get("verdict"),
     },
     "mortgage": lambda answers, result: {
+        "creditRange":        answers.get("credit_range"),
         "targetHomePrice":    answers.get("target_home_price"),
         "downPaymentAmount":  answers.get("down_payment_amount"),
         "hasExistingLender":  answers.get("has_existing_lender"),
@@ -197,5 +195,12 @@ PHASE_PROFILE_FIELDS = {
         "recommendedLoan":    result.get("recommended_loan_type"),
         "estimatedRate":      result.get("estimated_rate"),
         "mortgageVerdict":    result.get("verdict"),
+    },
+    "property": lambda answers, result: {
+        "propertyAddress":   result.get("property_address"),
+        "floodZone":         result.get("flood_zone"),
+        "overallRisk":       result.get("overall_risk"),
+        "redFlags":          result.get("red_flags"),
+        "recommendedSteps":  result.get("recommended_steps"),
     },
 }

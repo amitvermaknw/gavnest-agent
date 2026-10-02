@@ -54,7 +54,7 @@ def _format_budget(value: float) -> str:
     return f"${round(value / 1000)}k"
 
 
-async def compute_readiness(answers: dict) -> dict:
+async def compute_readiness(answers: dict, uid: str | None = None) -> dict:
     """
     answers keys: gross_monthly_income, monthly_debts, liquid_savings, employment_status
 
